@@ -18,13 +18,13 @@
   ],
   "require": {
     "silverstripe/framework": "^4",
-    "silverstripe/versioned": "^1",
-    "ext-http": "*"
+    "silverstripe/versioned": "^1"
   },
   "require-dev": {
+    "scriptfusion/phpunit-immediate-exception-printer": "^1",
     "roave/security-advisories": "dev-master",
     "phpunit/phpunit": "^5.7",
-    "silverstripe/recipe-cms": "^1.0"
+    "silverstripe/recipe-cms": "^1"
   },
   "extra": {
     "installer-name": "bootstrapmfa",
