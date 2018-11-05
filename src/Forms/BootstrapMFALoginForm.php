@@ -27,4 +27,9 @@ class BootstrapMFALoginForm extends MemberLoginForm
 
         return $fields;
     }
+
+    public function getAuthenticatorName()
+    {
+        return _t(__CLASS__ . '.AuthenticatorName', 'E-mail & Password (with MFA)');
+    }
 }

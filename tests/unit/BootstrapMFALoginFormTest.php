@@ -47,4 +47,14 @@ class BootstrapMFALoginFormTest extends SapphireTest
 
         $this->assertEquals(null, $fields->dataFieldByName('tokens'));
     }
+
+    public function testGetAuthenticatorName()
+    {
+        $loginForm = $this->getMockBuilder(BootstrapMFALoginForm::class)
+            ->disableOriginalConstructor()
+            ->setMethods(null)
+            ->getMock();
+
+        $this->assertContains('with MFA', $loginForm->getAuthenticatorName());
+    }
 }
