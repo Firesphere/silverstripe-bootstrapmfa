@@ -57,12 +57,9 @@ When building an MFA module on top of this, a few things are required:
 - Your MFALoginHandler extending BootstrapMFALoginHandler
 - Your MFAProvider implementing the MFAProvider
 - Your authenticator extending BootstrapMFAAuthenticator
-    - Must call the validateBackupCode method to validate the MFA backup codes
-
 
 An example of how to use this can be found at firesphere/silverstripe-yubiauth
 
-A non-functional demo module is expected to be released soon~ish
 
 
 # License

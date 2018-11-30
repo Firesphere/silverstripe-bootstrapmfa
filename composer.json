@@ -34,7 +34,8 @@
         "source": "https://github.com/firesphere/silverstripe-bootstrapmfa"
     },
     "suggest": {
-        "firesphere/yubiauth": "Authentication via Yubikey 2FA"
+        "firesphere/yubiauth": "Authentication via Yubikey 2FA",
+        "silverstripe/auditor": "Keep an audit log of MFA success and failures"
     },
     "minimum-stability": "dev",
     "prefer-stable": true

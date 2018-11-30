@@ -6,6 +6,7 @@ use Firesphere\BootstrapMFA\Authenticators\BootstrapMFAAuthenticator;
 use Firesphere\BootstrapMFA\Extensions\MemberExtension;
 use Firesphere\BootstrapMFA\Forms\BootstrapMFALoginForm;
 use InvalidArgumentException;
+use Monolog\Logger;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Control\Session;
@@ -24,6 +25,7 @@ use SilverStripe\View\ArrayData;
 
 /**
  * Class BootstrapMFALoginHandler
+ *
  * @package Firesphere\BootstrapMFA\Handlers
  */
 class BootstrapMFALoginHandler extends LoginHandler
@@ -45,6 +47,10 @@ class BootstrapMFALoginHandler extends LoginHandler
         'dologin',
         'secondFactor',
         'validateMFA',
+    ];
+
+    private static $dependencies = [
+        'auditLogger' => '%$AuditLogger'
     ];
 
     /**
@@ -87,6 +93,7 @@ class BootstrapMFALoginHandler extends LoginHandler
      * @param MemberLoginForm $form
      * @param HTTPRequest $request
      * @return HTTPResponse
+     * @throws \Exception
      */
     public function doLogin($data, MemberLoginForm $form, HTTPRequest $request)
     {
@@ -96,16 +103,15 @@ class BootstrapMFALoginHandler extends LoginHandler
          */
         $member = $this->checkLogin($data, $request, $message);
 
-        if (!$member) {
-            return $this->redirectBack();
-        }
-
         // If we're in grace period, continue to the parent
-        if ($member->isInGracePeriod()) {
+        if ($member && $member->isInGracePeriod()) {
+            $this->log('Login in grace period.', Logger::INFO);
+
             return parent::doLogin($data, $form, $request);
         }
 
-        if ($message->isValid()) {
+        if ($member && $message->isValid()) {
+            $this->log('Successful username/password login for MFA', Logger::INFO);
             /** @var Session $session */
             $session = $request->getSession();
             $session->set(BootstrapMFAAuthenticator::SESSION_KEY . '.MemberID', $member->ID);
@@ -114,7 +120,7 @@ class BootstrapMFALoginHandler extends LoginHandler
                 $session->set(BootstrapMFAAuthenticator::SESSION_KEY . '.BackURL', $data['BackURL']);
             }
 
-            return $this->redirect($this->link('verify'));
+            return $this->redirect($this->Link('verify'));
         }
 
         return $this->redirectBack();
@@ -134,7 +140,8 @@ class BootstrapMFALoginHandler extends LoginHandler
         $member = Member::get()->byID($memberID);
 
         if (!$member) {
-            // Assume the session has gone state...
+            $this->log('Session gone stale', Logger::INFO);
+            // Assume the session has gone stale...
             return $this->redirectBack();
         }
 
@@ -144,7 +151,7 @@ class BootstrapMFALoginHandler extends LoginHandler
         $view = ArrayData::create(['Forms' => ArrayList::create($formList)]);
         $rendered = [
             'Forms'   => $formList,
-            'Form'    => $view->renderWith(self::class . '_MFAForms'),
+            'Form'    => $view->renderWith(Security::class . '_MultiAuthenticatorTabbedForms'),
             'Primary' => $primary
         ];
 
@@ -184,6 +191,8 @@ class BootstrapMFALoginHandler extends LoginHandler
         $authenticationMethod = $postVars['AuthenticationMethod'];
         // Validate that the posted authentication method is a valid registered authenticator
         if (!$this->isValidAuthenticator($authenticationMethod)) {
+            $this->log('Invalid authentication method: ' . $authenticationMethod, Logger::EMERGENCY);
+            $this->getRequest()->getSession()->clearAll();
             throw new InvalidArgumentException(
                 sprintf('Unknown MFA authentication method "%s"', $authenticationMethod)
             );
@@ -200,6 +209,7 @@ class BootstrapMFALoginHandler extends LoginHandler
         $member = $authenticator->verifyMFA($postVars, $request, $postVars[$field], $result);
         // Manually login
         if ($member && $result->isValid()) {
+            $this->log('Successful MFA login with ' . $authenticationMethod, Logger::INFO);
             $data = $request->getSession()->get(BootstrapMFAAuthenticator::SESSION_KEY . '.Data');
             $backURL = $request->getSession()->get('BackURL'); // defaults to null, so it's fine
             $this->performLogin($member, $data, $request);
@@ -211,6 +221,7 @@ class BootstrapMFALoginHandler extends LoginHandler
 
         // Failure of login, trash session and redirect back
         $this->cancelLogin($request);
+        $this->log('Failure MFA login with ' . $authenticationMethod, Logger::ALERT);
 
         BootstrapMFALoginForm::create($this, BootstrapMFAAuthenticator::class, 'LoginForm')->sessionMessage(
             _t(
@@ -235,6 +246,7 @@ class BootstrapMFALoginHandler extends LoginHandler
         $authenticationMethod = $request->postVar('AuthenticationMethod');
         if (!$tokenCheck || !$this->isValidAuthenticator($authenticationMethod)) {
             // Failure of login, trash session and redirect back
+            $this->log('Invalid security token or authentication method', Logger::ALERT);
             $this->cancelLogin($request);
             // User tampered with the authentication method input. Thus invalidate
             throw new \Exception('Invalid authentication', 1);
@@ -258,5 +270,38 @@ class BootstrapMFALoginHandler extends LoginHandler
     {
         $request->getSession()->clear(BootstrapMFAAuthenticator::SESSION_KEY);
         Injector::inst()->get(IdentityStore::class)->logOut();
+    }
+
+    /**
+     * @param string $message
+     * @param int $type
+     */
+    protected function log($message, $type)
+    {
+        $memberID = $this->getRequest()->getSession()->get(BootstrapMFAAuthenticator::SESSION_KEY . '.MemberID');
+
+        // First, let's see if we know the member
+        /** @var Member|null $member */
+        $member = Member::get()->byID($memberID);
+        if ($this->auditLogger) {
+            $userInfo = [];
+            if ($member) {
+                $userInfo = ['Member' => ['ID' => $member->ID, 'Name' => $member->getName()]];
+            }
+            switch ($type) {
+                case Logger::INFO:
+                    $this->auditLogger->info($message, $userInfo);
+                    break;
+                case Logger::ALERT:
+                    $this->auditLogger->warn($message, $userInfo);
+                    break;
+                case Logger::EMERGENCY:
+                    $this->auditLogger->emergency($message, $userInfo);
+                    break;
+                default:
+                    // Default to a notice
+                    $this->auditLogger->notice($message, $userInfo);
+        }
+        }
     }
 }
