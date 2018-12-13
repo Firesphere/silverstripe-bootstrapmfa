@@ -105,13 +105,13 @@ class BootstrapMFALoginHandler extends LoginHandler
 
         // If we're in grace period, continue to the parent
         if ($member && $member->isInGracePeriod()) {
-            $this->log('Login in grace period.', Logger::INFO);
+            $this->extend('gracePeriodLogin', $member);
 
             return parent::doLogin($data, $form, $request);
         }
 
         if ($member && $message->isValid()) {
-            $this->log('Successful username/password login for MFA', Logger::INFO);
+            $this->extend('mfaPreLoginSuccess', $member);
             /** @var Session $session */
             $session = $request->getSession();
             $session->set(BootstrapMFAAuthenticator::SESSION_KEY . '.MemberID', $member->ID);
@@ -123,6 +123,8 @@ class BootstrapMFALoginHandler extends LoginHandler
             return $this->redirect($this->Link('verify'));
         }
 
+        $this->extend('failedLogin');
+
         return $this->redirectBack();
     }
 
@@ -130,7 +132,7 @@ class BootstrapMFALoginHandler extends LoginHandler
      * Render the second factor forms for displaying at the frontend
      *
      * @param HTTPRequest $request
-     * @return array
+     * @return HTTPResponse|array
      * @throws \Exception
      */
     public function secondFactor(HTTPRequest $request)
@@ -140,7 +142,7 @@ class BootstrapMFALoginHandler extends LoginHandler
         $member = Member::get()->byID($memberID);
 
         if (!$member) {
-            $this->log('Session gone stale', Logger::INFO);
+            $this->extend('staleSession');
             // Assume the session has gone stale...
             return $this->redirectBack();
         }
@@ -155,7 +157,7 @@ class BootstrapMFALoginHandler extends LoginHandler
             'Primary' => $primary
         ];
 
-        $this->extend('onBeforeSecondFactor', $rendered, $view);
+        $this->extend('onBeforeSecondFactor', $rendered, $view, $member);
 
         return $rendered;
     }
@@ -191,8 +193,15 @@ class BootstrapMFALoginHandler extends LoginHandler
         $authenticationMethod = $postVars['AuthenticationMethod'];
         // Validate that the posted authentication method is a valid registered authenticator
         if (!$this->isValidAuthenticator($authenticationMethod)) {
-            $this->log('Invalid authentication method: ' . $authenticationMethod, Logger::EMERGENCY);
-            $this->getRequest()->getSession()->clearAll();
+            $memberID = $this->getRequest()->getSession()->get(BootstrapMFAAuthenticator::SESSION_KEY . '.MemberID');
+
+            /** @var Member|null $member */
+            $member = Member::get()->byID($memberID);
+
+            $this->extend('invalidAuthenticationMethod', $authenticationMethod, $member);
+
+            $this->cancelLogin($request);
+
             throw new InvalidArgumentException(
                 sprintf('Unknown MFA authentication method "%s"', $authenticationMethod)
             );
@@ -209,7 +218,8 @@ class BootstrapMFALoginHandler extends LoginHandler
         $member = $authenticator->verifyMFA($postVars, $request, $postVars[$field], $result);
         // Manually login
         if ($member && $result->isValid()) {
-            $this->log('Successful MFA login with ' . $authenticationMethod, Logger::INFO);
+            $this->extend('afterMFALogin', $member, $authenticationMethod);
+
             $data = $request->getSession()->get(BootstrapMFAAuthenticator::SESSION_KEY . '.Data');
             $backURL = $request->getSession()->get('BackURL'); // defaults to null, so it's fine
             $this->performLogin($member, $data, $request);
@@ -220,8 +230,9 @@ class BootstrapMFALoginHandler extends LoginHandler
         }
 
         // Failure of login, trash session and redirect back
+        $this->extend('failedMFALogin', $authenticationMethod, $member);
         $this->cancelLogin($request);
-        $this->log('Failure MFA login with ' . $authenticationMethod, Logger::ALERT);
+
 
         BootstrapMFALoginForm::create($this, BootstrapMFAAuthenticator::class, 'LoginForm')->sessionMessage(
             _t(
@@ -246,7 +257,8 @@ class BootstrapMFALoginHandler extends LoginHandler
         $authenticationMethod = $request->postVar('AuthenticationMethod');
         if (!$tokenCheck || !$this->isValidAuthenticator($authenticationMethod)) {
             // Failure of login, trash session and redirect back
-            $this->log('Invalid security token or authentication method', Logger::ALERT);
+            $this->extend('invalidToken', $authenticationMethod);
+
             $this->cancelLogin($request);
             // User tampered with the authentication method input. Thus invalidate
             throw new \Exception('Invalid authentication', 1);
@@ -270,38 +282,5 @@ class BootstrapMFALoginHandler extends LoginHandler
     {
         $request->getSession()->clear(BootstrapMFAAuthenticator::SESSION_KEY);
         Injector::inst()->get(IdentityStore::class)->logOut();
-    }
-
-    /**
-     * @param string $message
-     * @param int $type
-     */
-    protected function log($message, $type)
-    {
-        $memberID = $this->getRequest()->getSession()->get(BootstrapMFAAuthenticator::SESSION_KEY . '.MemberID');
-
-        // First, let's see if we know the member
-        /** @var Member|null $member */
-        $member = Member::get()->byID($memberID);
-        if ($this->auditLogger) {
-            $userInfo = [];
-            if ($member) {
-                $userInfo = ['Member' => ['ID' => $member->ID, 'Name' => $member->getName()]];
-            }
-            switch ($type) {
-                case Logger::INFO:
-                    $this->auditLogger->info($message, $userInfo);
-                    break;
-                case Logger::ALERT:
-                    $this->auditLogger->warn($message, $userInfo);
-                    break;
-                case Logger::EMERGENCY:
-                    $this->auditLogger->emergency($message, $userInfo);
-                    break;
-                default:
-                    // Default to a notice
-                    $this->auditLogger->notice($message, $userInfo);
-        }
-        }
     }
 }
