@@ -120,7 +120,9 @@ class BootstrapMFALoginHandler extends LoginHandler
                 $session->set(BootstrapMFAAuthenticator::SESSION_KEY . '.BackURL', $data['BackURL']);
             }
 
-            return $this->redirect($this->Link('verify'));
+            $this->extend('beforeSecondFactor', $member);
+
+            return $this->redirect($this->link('verify'));
         }
 
         $this->extend('failedLogin');
