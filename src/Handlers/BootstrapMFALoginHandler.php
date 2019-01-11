@@ -125,7 +125,7 @@ class BootstrapMFALoginHandler extends LoginHandler
             return $this->redirect($this->link('verify'));
         }
 
-        $this->extend('failedLogin');
+        $this->extend('authenticationFailed');
 
         return $this->redirectBack();
     }
@@ -220,7 +220,7 @@ class BootstrapMFALoginHandler extends LoginHandler
         $member = $authenticator->verifyMFA($postVars, $request, $postVars[$field], $result);
         // Manually login
         if ($member && $result->isValid()) {
-            $this->extend('afterMFALogin', $member, $authenticationMethod);
+            $this->extend('afterMFALogin', $authenticationMethod, $member);
 
             $data = $request->getSession()->get(BootstrapMFAAuthenticator::SESSION_KEY . '.Data');
             $backURL = $request->getSession()->get('BackURL'); // defaults to null, so it's fine
@@ -257,13 +257,20 @@ class BootstrapMFALoginHandler extends LoginHandler
         $tokenCheck = $securityToken->check($request->postVar('SecurityID'));
 
         $authenticationMethod = $request->postVar('AuthenticationMethod');
-        if (!$tokenCheck || !$this->isValidAuthenticator($authenticationMethod)) {
+        if (!$tokenCheck) {
             // Failure of login, trash session and redirect back
             $this->extend('invalidToken', $authenticationMethod);
 
             $this->cancelLogin($request);
             // User tampered with the authentication method input. Thus invalidate
-            throw new \Exception('Invalid authentication', 1);
+            throw new \Exception('Session expired', 1);
+        }
+        if (!$this->isValidAuthenticator($authenticationMethod)) {
+            $this->extend('invalidAuthenticator', $authenticationMethod);
+
+            $this->cancelLogin($request);
+
+            throw new \Exception('Invalid authenticator', 1);
         }
     }
 
